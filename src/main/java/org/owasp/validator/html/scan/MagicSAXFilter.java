@@ -69,6 +69,8 @@ public class MagicSAXFilter extends DefaultFilter implements XMLDocumentFilter {
 	private boolean isNofollowAnchors;
 	private boolean isValidateParamAsEmbed;
 	private boolean inCdata = false;
+    // Number of open raw text elements (textarea, xmp, noscript...) around the current node
+    private int rawTextElementDepth = 0;
     // From policy
     private boolean preserveComments;
     private int maxInputSize;
@@ -91,6 +93,7 @@ public class MagicSAXFilter extends DefaultFilter implements XMLDocumentFilter {
         cssAttributes = null;
         cssScanner = null;
         inCdata = false;
+        rawTextElementDepth = 0;
 
     }
 
@@ -116,16 +119,27 @@ public class MagicSAXFilter extends DefaultFilter implements XMLDocumentFilter {
 
     private static final Pattern conditionalDirectives =
             Pattern.compile("<?!?\\[\\s*(?:end)?if[^]]*\\]>?");
+    // Comment content a browser would end early ("<!-->", "<!--->" or "--!>").
+    private static final Pattern prematureCommentEnd =
+            Pattern.compile("^-?>|--!>");
 
     public void comment(XMLString text, Augmentations augs) throws XNIException {
 
-		if (preserveComments) {
+		// Browsers parse the content of raw text elements (textarea, xmp,
+		// noscript...) as text. A comment found inside one of them can't be
+		// preserved: a closing tag hidden in it would end the element and the
+		// rest of the comment would become markup.
+		if (preserveComments && rawTextElementDepth == 0) {
 			String value = text.toString();
 			// Strip conditional directives regardless of the
 			// PRESERVE_COMMENTS setting.
 			if (value != null) {
                 value = conditionalDirectives.matcher(value).replaceAll("");
-				super.comment(new XMLString(value.toCharArray(), 0, value.length()), augs);
+                // A browser would close such a comment early and parse
+                // the rest of it as markup, so it can't be preserved.
+                if (!prematureCommentEnd.matcher(value).find()) {
+                    super.comment(new XMLString(value.toCharArray(), 0, value.length()), augs);
+                }
 			}
 		}
 	}
@@ -148,6 +162,9 @@ public class MagicSAXFilter extends DefaultFilter implements XMLDocumentFilter {
     }
 
 	public void endElement(QName element, Augmentations augs) throws XNIException {
+        if (rawTextElementDepth > 0 && Constants.RAW_TEXT_TAGS.contains(element.localpart.toLowerCase())) {
+            rawTextElementDepth--;
+        }
         Ops topOp = peekTop();
         if (Ops.REMOVE == topOp) {
 			// content is removed altogether
@@ -233,6 +250,9 @@ public class MagicSAXFilter extends DefaultFilter implements XMLDocumentFilter {
 		// see if we have a policy for this tag.
         String tagNameLowerCase = element.localpart.toLowerCase();
         Tag tag = policy.getTagByLowercaseName(tagNameLowerCase);
+        if (Constants.RAW_TEXT_TAGS.contains(tagNameLowerCase)) {
+            rawTextElementDepth++;
+        }
 
 		/*
 		 * Handle the automatic translation of <param> to nested <embed> for IE.

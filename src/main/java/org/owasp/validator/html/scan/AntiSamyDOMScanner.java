@@ -68,6 +68,9 @@ public class AntiSamyDOMScanner extends AbstractAntiSamyScanner {
             Pattern.compile("[\\u0000-\\u001F\\uD800-\\uDFFF\\uFFFE-\\uFFFF&&[^\\u0009\\u000A\\u000D]]");
     private static final Pattern conditionalDirectives =
             Pattern.compile("<?!?\\[\\s*(?:end)?if[^]]*\\]>?");
+    // Comment content a browser would end early ("<!-->", "<!--->" or "--!>").
+    private static final Pattern prematureCommentEnd =
+            Pattern.compile("^-?>|--!>");
 
     private static final Queue<CachedItem> cachedItems = new ConcurrentLinkedQueue<CachedItem>();
 
@@ -211,6 +214,7 @@ public class AntiSamyDOMScanner extends AbstractAntiSamyScanner {
 
         parser.setFeature("http://cyberneko.org/html/features/scanner/style/strip-cdata-delims", false);
         parser.setFeature("http://cyberneko.org/html/features/scanner/cdata-sections", true);
+        parser.setFeature("http://cyberneko.org/html/features/parse-noscript-content", false);
 
         try {
             parser.setFeature("http://cyberneko.org/html/features/enforce-strict-attribute-names", true);
@@ -722,16 +726,38 @@ public class AntiSamyDOMScanner extends AbstractAntiSamyScanner {
     }
 
     private void processCommentNode(Node node) {
-        if (!policy.isPreserveComments()) {
+        if (!policy.isPreserveComments() || isInsideRawTextElement(node)) {
             node.getParentNode().removeChild(node);
         } else {
             String value = ((Comment) node).getData();
             // Strip conditional directives regardless of the
             // PRESERVE_COMMENTS setting.
             if (value != null) {
-                ((Comment) node).setData(conditionalDirectives.matcher(value).replaceAll(""));
+                value = conditionalDirectives.matcher(value).replaceAll("");
+                if (prematureCommentEnd.matcher(value).find()) {
+                    // A browser would close this comment early and parse
+                    // the rest of it as markup, so it can't be preserved.
+                    node.getParentNode().removeChild(node);
+                } else {
+                    ((Comment) node).setData(value);
+                }
             }
         }
+    }
+
+    /*
+     * Browsers parse the content of raw text elements (textarea, xmp,
+     * noscript...) as text. A comment the parser found inside one of them
+     * can't be preserved: when serialized, a closing tag hidden in it would
+     * end the element and the rest of the comment would become markup.
+     */
+    private boolean isInsideRawTextElement(Node node) {
+        for (Node ancestor = node.getParentNode(); ancestor != null; ancestor = ancestor.getParentNode()) {
+            if (ancestor instanceof Element && Constants.RAW_TEXT_TAGS.contains(ancestor.getNodeName().toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean removeDisallowedEmpty(Node node){

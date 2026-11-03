@@ -1448,4 +1448,80 @@ static final String test33 = "<html>\n"
             assertThat(as.scan("<style/><b>a</b><xmp></style><a href=javascript:alert(1)>x</xmp>", p, AntiSamy.SAX).getCleanHTML(), not(containsString("javascript")));
         }
     }
+
+    @Test
+    public void testRawTextProcessingWhenPreservingComments() throws ScanException, PolicyException {
+        // Concern is that when preserving comments, certain tags would get their content badly parsed
+        // due to mutation XSS.
+        String[] payloads = {
+            "<noscript><!--</noscript><img src=x onerror=mxss(1)>-->",
+            "<textarea/><!--</textarea><img src=x onerror=mxss(1)>-->",
+            "<xmp/><!--</xmp><img src=x onerror=mxss(1)>-->"
+        };
+
+        TestPolicy revised = policy.cloneWithDirective(Policy.PRESERVE_COMMENTS, "true");
+        Tag tag = new Tag("xmp", Collections.<String, Attribute>emptyMap(), Policy.ACTION_VALIDATE);
+        revised = revised.addTagRule(tag);
+
+        for (String payload : payloads) {
+            assertThat(as.scan(payload, revised, AntiSamy.DOM).getCleanHTML(), not(containsString("mxss")));
+            assertThat(as.scan(payload, revised, AntiSamy.SAX).getCleanHTML(), not(containsString("mxss")));
+        }
+    }
+
+    @Test
+    public void testCommentsInsideRawTextElementsWhenPreservingComments() throws ScanException, PolicyException {
+        // The parser may report a comment inside an element whose content browsers parse as
+        // raw text (e.g. after a self-closed "<textarea/>"). Such a comment, even when nested in
+        // other tags, must not be preserved or the hidden closing tag would lead to mutation XSS.
+        String[] payloads = {
+            "<noscript/><!--</noscript><img src=x onerror=mxss(1)>-->",
+            "<textarea/><b><!--</textarea><img src=x onerror=mxss(1)>--></b>",
+            "<textarea/><p><b><!--</textarea><img src=x onerror=mxss(1)>--></b></p>",
+            "<xmp/><b><!--</xmp><img src=x onerror=mxss(1)>--></b>",
+            "<title/><!--</title><img src=x onerror=mxss(1)>-->",
+            "<noembed/><!--</noembed><img src=x onerror=mxss(1)>-->",
+            "<noembed><!--</noembed><img src=x onerror=mxss(1)>-->"
+        };
+
+        TestPolicy revised = policy.cloneWithDirective(Policy.PRESERVE_COMMENTS, "true");
+        revised = revised.addTagRule(new Tag("xmp", Collections.<String, Attribute>emptyMap(), Policy.ACTION_VALIDATE));
+        revised = revised.addTagRule(new Tag("noembed", Collections.<String, Attribute>emptyMap(), Policy.ACTION_VALIDATE));
+        TestPolicy revised2 = revised.cloneWithDirective(Policy.USE_XHTML, "false");
+
+        for (TestPolicy p : new TestPolicy[]{revised, revised2}) {
+            for (String payload : payloads) {
+                assertThat(as.scan(payload, p, AntiSamy.DOM).getCleanHTML(), not(containsString("mxss")));
+                assertThat(as.scan(payload, p, AntiSamy.SAX).getCleanHTML(), not(containsString("mxss")));
+            }
+        }
+
+        // Regular comments are still preserved.
+        assertThat(as.scan("<div>text <!-- comment --></div>", revised, AntiSamy.DOM).getCleanHTML(), containsString("<!-- comment -->"));
+        assertThat(as.scan("<div>text <!-- comment --></div>", revised, AntiSamy.SAX).getCleanHTML(), containsString("<!-- comment -->"));
+    }
+
+    @Test
+    public void testCommentsClosedEarlyByBrowsersWhenPreservingComments() throws ScanException, PolicyException {
+        // Browsers end a comment at "<!-->", "<!--->" and "--!>", while the parser does not. If such
+        // a comment was preserved, the rest of its content would become live markup.
+        String[] payloads = {
+            "<div><!--><img src=x onerror=mxss(1)>--></div>",
+            "<div><!---><img src=x onerror=mxss(1)>--></div>",
+            "<div><!-- --!><img src=x onerror=mxss(1)>--></div>",
+            "<div><!--[if IE]>><img src=x onerror=mxss(1)>--></div>",
+            "<!--><img src=x onerror=mxss(1)>-->",
+            "<!-- --!><img src=x onerror=mxss(1)>-->"
+        };
+
+        TestPolicy revised = policy.cloneWithDirective(Policy.PRESERVE_COMMENTS, "true");
+        TestPolicy revised2 = revised.cloneWithDirective(Policy.USE_XHTML, "false");
+
+        for (TestPolicy p : new TestPolicy[]{revised, revised2}) {
+            for (String payload : payloads) {
+                assertThat(as.scan(payload, p, AntiSamy.DOM).getCleanHTML(), not(containsString("mxss")));
+                assertThat(as.scan(payload, p, AntiSamy.SAX).getCleanHTML(), not(containsString("mxss")));
+            }
+        }
+    }
 }

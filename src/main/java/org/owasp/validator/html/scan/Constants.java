@@ -46,6 +46,16 @@ public class Constants {
     	"iframe", "script", "link"
     };
 
+    /*
+     * Elements whose content browsers parse as (escapable) raw text, not as
+     * markup. A comment must never be written inside of them: the browser does
+     * not see it as a comment, so a closing tag hidden in it would end the
+     * element and turn the rest of the "comment" into live markup (mXSS).
+     */
+    public static final Set<String> RAW_TEXT_TAGS = Collections.unmodifiableSet(new HashSet<String>(Arrays.asList(
+            "iframe", "noembed", "noframes", "noscript", "plaintext", "script", "style", "textarea", "title", "xmp"
+        )));
+
     static {
         Attribute paramNameAttr = new Attribute("name", Arrays.asList(Policy.ANYTHING_REGEXP), Collections.<String>emptyList(), null, null );
         Attribute paramValueAttr = new Attribute("value", Arrays.asList(Policy.ANYTHING_REGEXP), Collections.<String>emptyList(), null, null );
