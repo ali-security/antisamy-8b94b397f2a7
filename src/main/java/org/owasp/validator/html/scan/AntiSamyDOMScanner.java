@@ -401,12 +401,25 @@ public class AntiSamyDOMScanner extends AbstractAntiSamyScanner {
 
         try {
 
-            Node firstChild = ele.getFirstChild();
-            if (firstChild != null) {
+            int childNodesCount = ele.getChildNodes().getLength();
+            if (childNodesCount > 0) {
 
-                String toScan = firstChild.getNodeValue();
+                /*
+                 * HTML tags may be smuggled into a style tag after parsing
+                 * input to an internal representation. The content of every
+                 * child node is treated as CSS text, not just the first one.
+                 */
+                StringBuilder toScan = new StringBuilder();
 
-                CleanResults cr = styleScanner.scanStyleSheet(toScan, policy.getMaxInputSize());
+                for (int i = 0; i < childNodesCount; i++) {
+                    Node childNode = ele.getChildNodes().item(i);
+                    if (toScan.length() > 0) {
+                        toScan.append("\n");
+                    }
+                    toScan.append(childNode.getTextContent());
+                }
+
+                CleanResults cr = styleScanner.scanStyleSheet(toScan.toString(), policy.getMaxInputSize());
 
                 errorMessages.addAll(cr.getErrorMessages());
 
@@ -418,18 +431,30 @@ public class AntiSamyDOMScanner extends AbstractAntiSamyScanner {
                  * break all CSS. To prevent that, we have this check.
                  */
 
-                final String cleanHTML = cr.getCleanHTML();
+                String cleanHTML = cr.getCleanHTML();
+                cleanHTML = cleanHTML == null || cleanHTML.equals("") ? "/* */" : cleanHTML;
 
-                if (cleanHTML == null || cleanHTML.equals("")) {
-
-                    firstChild.setNodeValue("/* */");
-
-                } else {
-
+                Node firstChild = ele.getFirstChild();
+                if (firstChild instanceof Text) {
                     firstChild.setNodeValue(cleanHTML);
-
+                } else {
+                    /*
+                     * Setting the value of a non-text node (e.g. a smuggled
+                     * element) has no effect, so replace it with a text node
+                     * holding the cleaned CSS.
+                     */
+                    ele.replaceChild(ele.getOwnerDocument().createTextNode(cleanHTML), firstChild);
                 }
 
+                /*
+                 * Remove every other node after cleaning CSS, there will
+                 * be only one node in the end, as it always should have.
+                 * Starting from the end due to list updating on the fly.
+                 */
+                for (int i = childNodesCount - 1; i >= 1; i--) {
+                    Node childNode = ele.getChildNodes().item(i);
+                    ele.removeChild(childNode);
+                }
             }
 
         } catch (DOMException e) {

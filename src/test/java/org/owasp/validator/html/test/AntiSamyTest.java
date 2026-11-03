@@ -1408,4 +1408,44 @@ static final String test33 = "<html>\n"
         assertThat(as.scan("<p><a href=\"javascript&#00058x=1,%61%6c%65%72%74%28%22%62%6f%6f%6d%22%29\">xss</a></p>", revised, AntiSamy.SAX).getCleanHTML(),
                 containsString("javascript&amp;#00058"));
     }
+
+    @Test
+    public void testSmuggledTagsInStyleContent() throws ScanException, PolicyException {
+        // HTML tags may be smuggled into a style tag after parsing input to an internal representation.
+        // If that happens, they should be treated as text content and not as children nodes.
+
+        Policy revised = policy.cloneWithDirective(Policy.USE_XHTML,"true");
+        assertThat(as.scan("<style/>b<![cdata[</style><a href=javascript:alert(1)>test", revised, AntiSamy.DOM).getCleanHTML(), not(containsString("javascript")));
+        assertThat(as.scan("<style/>b<![cdata[</style><a href=javascript:alert(1)>test", revised, AntiSamy.SAX).getCleanHTML(), not(containsString("javascript")));
+
+        Policy revised2 = policy.cloneWithDirective(Policy.USE_XHTML,"false");
+        assertThat(as.scan("<select<style/>W<xmp<script>alert(1)</script>", revised2, AntiSamy.DOM).getCleanHTML(), not(containsString("script")));
+        assertThat(as.scan("<select<style/>W<xmp<script>alert(1)</script>", revised2, AntiSamy.SAX).getCleanHTML(), not(containsString("script")));
+
+        // Three or more children inside the style tag: every extra child must be removed.
+        assertThat(as.scan("<select<style/>k<input<</>input/onfocus=alert(1)>", revised, AntiSamy.DOM).getCleanHTML(), not(containsString("input")));
+        assertThat(as.scan("<select<style/>k<input<</>input/onfocus=alert(1)>", revised, AntiSamy.SAX).getCleanHTML(), not(containsString("input")));
+        assertThat(as.scan("<select<style/>k<input<</>input/onfocus=alert(1)>", revised2, AntiSamy.DOM).getCleanHTML(), not(containsString("input")));
+        assertThat(as.scan("<select<style/>k<input<</>input/onfocus=alert(1)>", revised2, AntiSamy.SAX).getCleanHTML(), not(containsString("input")));
+        assertThat(as.scan("<style/>a<b>c</b><xmp></style><a href=javascript:alert(1)>x</xmp>", revised, AntiSamy.DOM).getCleanHTML(), not(containsString("javascript")));
+        assertThat(as.scan("<style/>a<b>c</b><xmp></style><a href=javascript:alert(1)>x</xmp>", revised2, AntiSamy.DOM).getCleanHTML(), not(containsString("javascript")));
+    }
+
+    @Test
+    public void testSmuggledTagAsFirstChildOfStyleContent() throws ScanException, PolicyException {
+        // The smuggled tag may also be the very first child of the style tag.
+
+        Policy revised = policy.cloneWithDirective(Policy.USE_XHTML,"true");
+        Policy revised2 = policy.cloneWithDirective(Policy.USE_XHTML,"false");
+        for (Policy p : new Policy[]{revised, revised2}) {
+            assertThat(as.scan("<style/><xmp></style><a href=javascript:alert(1)>x</xmp>", p, AntiSamy.DOM).getCleanHTML(), not(containsString("javascript")));
+            assertThat(as.scan("<style/><xmp></style><a href=javascript:alert(1)>x</xmp>", p, AntiSamy.SAX).getCleanHTML(), not(containsString("javascript")));
+            assertThat(as.scan("<select<style/><xmp<script>alert(1)</script>", p, AntiSamy.DOM).getCleanHTML(), not(containsString("script")));
+            assertThat(as.scan("<select<style/><xmp<script>alert(1)</script>", p, AntiSamy.SAX).getCleanHTML(), not(containsString("script")));
+            assertThat(as.scan("<style/><xmp>a{color:red}</style><a href=javascript:alert(1)>x</xmp>", p, AntiSamy.DOM).getCleanHTML(), not(containsString("javascript")));
+            assertThat(as.scan("<style/><xmp>a{color:red}</style><a href=javascript:alert(1)>x</xmp>", p, AntiSamy.SAX).getCleanHTML(), not(containsString("javascript")));
+            assertThat(as.scan("<style/><b>a</b><xmp></style><a href=javascript:alert(1)>x</xmp>", p, AntiSamy.DOM).getCleanHTML(), not(containsString("javascript")));
+            assertThat(as.scan("<style/><b>a</b><xmp></style><a href=javascript:alert(1)>x</xmp>", p, AntiSamy.SAX).getCleanHTML(), not(containsString("javascript")));
+        }
+    }
 }
